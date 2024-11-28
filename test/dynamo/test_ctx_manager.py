@@ -2089,7 +2089,6 @@ class GraphModule(torch.nn.Module):
 """,
         )
 
-    @unittest.expectedFailure
     def test_graph_break_before___enter__(self):
         @contextlib.contextmanager
         def whoo(x):
@@ -2140,7 +2139,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(expected, out)
         self.assertEqual(len(eager.graphs), 0)
 
-    @unittest.expectedFailure
     def test_graph_break_after___enter__(self):
         @contextlib.contextmanager
         def whoo(x):
@@ -2166,7 +2164,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(expected, out)
         self.assertEqual(len(eager.graphs), 0)
 
-    @unittest.expectedFailure
     def test_graph_break_before_and_after___enter__(self):
         @contextlib.contextmanager
         def whoo(x):
@@ -2193,7 +2190,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(expected, out)
         self.assertEqual(len(eager.graphs), 0)
 
-    @unittest.expectedFailure
     def test_graph_break_before___enter___and_disable___exit__(self):
         @contextlib.contextmanager
         def whoo(x):
@@ -2224,7 +2220,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(expected, out)
         self.assertEqual(len(eager.graphs), 0)
 
-    @unittest.expectedFailure
     def test_disable___enter__(self):
         def h(x):
             return x.cos()
@@ -2309,7 +2304,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(expected, out)
         self.assertEqual(len(eager.graphs), 0)
 
-    @unittest.expectedFailure
     def test_graph_break_and_disable___enter__(self):
         @contextlib.contextmanager
         def whoo(x):
@@ -2364,7 +2358,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(expected, out)
         self.assertEqual(len(eager.graphs), 0)
 
-    @unittest.expectedFailure
     @torch._dynamo.config.patch(enable_trace_contextlib=False)
     def test_disable_trace_contextmanager(self):
         @contextlib.contextmanager
@@ -2789,6 +2782,134 @@ class CPythonContextManagerTestCase(torch._dynamo.test_case.TestCase):
 
         self.assertEqual(ncols, 10)
         self.assertEqual(depth, 0)
+
+
+class GeneratorTests(torch._dynamo.test_case.TestCase):
+    def test_generator_simple(self):
+        def whoo():
+            yield 1
+            yield 2
+            yield 3
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(t):
+            gen = whoo()
+            t = t + next(gen)
+            t = t + next(gen)
+            t = t + next(gen)
+            return t
+
+        t = torch.randn(2)
+        y = fn(t)
+        self.assertEqual(y, t + 6)
+
+    def test_infinite_generator(self):
+        def whoo():
+            i = 0
+            while True:
+                yield i
+                i += 1
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(t):
+            gen = whoo()
+            t = t + next(gen)
+            t = t + next(gen)
+            t = t + next(gen)
+            return t
+
+        t = torch.randn(2)
+        y = fn(t)
+        self.assertEqual(y, t + 3)
+
+    def test_infinite_generator_2(self):
+        def whoo(x):
+            while True:
+                yield x
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(t):
+            return list(zip(range(3), whoo(1)))
+
+        t = torch.randn(2)
+        y = fn(t)
+        self.assertEqual(y, list(zip(range(3), whoo(1))))
+
+    def test_iter(self):
+        def whoo():
+            i = 0
+            while True:
+                yield i
+                i += 1
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(t):
+            s = 0
+            for i in whoo():
+                if i > 5:
+                    break
+                s += i
+            return t + s
+
+        t = torch.randn(2)
+        y = fn(t)
+        self.assertEqual(y, t + sum(range(6)))
+
+    def test_graph_break_in_generator(self):
+        def whoo():
+            yield 1
+            torch._dynamo.graph_break()
+            yield 2
+
+        eager = EagerAndRecordGraphs()
+
+        @torch.compile(backend=eager, fullgraph=False)
+        def fn(t):
+            gen = whoo()
+            s = next(gen)
+            s += next(gen)
+            return t + s
+
+        t = torch.randn(2)
+        y = fn(t)
+        self.assertEqual(y, t + 3)
+        self.assertEqual(len(eager.graphs), 0)
+
+    def test_graph_break_in_generator_2(self):
+        def whoo(x):
+            yield x.sin()
+            torch._dynamo.graph_break()
+            yield x.cos()
+
+        def call_whoo(x):
+            gen = whoo(x)
+            sin = next(gen)
+            cos = next(gen)
+            return sin, cos
+
+        eager = EagerAndRecordGraphs()
+
+        @torch.compile(backend=eager, fullgraph=False)
+        def fn(t):
+            sin, cos = call_whoo(t)
+            return sin + cos
+
+        t = torch.randn(2)
+        y = fn(t)
+        self.assertEqual(y, t.sin() + t.cos())
+        self.assertEqual(len(eager.graphs), 1)
+        self.assertExpectedInline(
+            normalize_gm(eager.graphs[0].print_readable(False)),
+            """\
+class GraphModule(torch.nn.Module):
+    def forward(self, L_stack0_0_: "f32[2]", L_stack0_1_: "f32[2]"):
+        l_stack0_0_ = L_stack0_0_
+        l_stack0_1_ = L_stack0_1_
+
+        add: "f32[2]" = l_stack0_0_ + l_stack0_1_;  l_stack0_0_ = l_stack0_1_ = None
+        return (add,)
+""",
+        )
 
 
 instantiate_parametrized_tests(CtxManagerTests)

@@ -24,7 +24,12 @@ import torch
 
 from .. import polyfills, variables
 from ..bytecode_transformation import create_call_function, create_rot_n
-from ..exc import unimplemented, Unsupported
+from ..exc import (
+    handle_observed_exception,
+    ObservedUserStopIteration,
+    unimplemented,
+    Unsupported,
+)
 from ..guards import GuardBuilder, install_guard
 from ..source import AttrSource, ConstantSource, DefaultsSource, GetItemSource
 from ..utils import (
@@ -330,14 +335,12 @@ class UserFunctionVariable(BaseUserFunctionVariable):
         return super().call_function(tx, args, kwargs)
 
 
-class FunctionDecoratedByContextlibContextManagerVariable(BaseUserFunctionVariable):
-    # TODO(guilherme): replace this with a generic GeneratorFunctionVariable
-
+class GeneratorFunctionVariable(BaseUserFunctionVariable):
     """functions that behaves like iterators
 
     .. note::
 
-        This is only used when the function is annotated with @contextlib.contextmanager
+        This is a wrapper around (Nested)UserFunctionVariable
     """
 
     def __init__(self, vt: VariableTracker, **kwargs):
@@ -365,7 +368,6 @@ class FunctionDecoratedByContextlibContextManagerVariable(BaseUserFunctionVariab
             self,
             [*self.self_args(), *args],
             kwargs,
-            stop_generator_on_yield=True,
         )
 
         return self
@@ -384,10 +386,40 @@ class FunctionDecoratedByContextlibContextManagerVariable(BaseUserFunctionVariab
             # created on call_function. Any exception needs to be propagated to tx
             # for Dynamo to behave correctly
             with patch.dict(counters, {"unimplemented": counters["inline_call"]}):
-                return tracer.inline_call_().next_variable(tx)
+                return tracer.inline_call_()
         except exc.ObservedException as e:
             tx.exn_vt_stack.extend(tracer.exn_vt_stack)
             raise e
+        except Unsupported as e:
+            # fallback to eager
+            from torch._C._dynamo.eval_frame import skip_code
+
+            code = self.vt.get_code()
+            skip_code(code)
+            raise exc.SkipFrame from e
+            # raise exc.SkipCodeRecursiveException from e
+
+    def force_unpack_var_sequence(self, tx) -> List[VariableTracker]:
+        result = []
+        while True:
+            try:
+                result.append(self.next_variable(tx))
+            except ObservedUserStopIteration:
+                handle_observed_exception(tx)
+                break
+        return result
+
+    def call_method(
+        self,
+        tx: "InstructionTranslator",
+        name: str,
+        args: "List[VariableTracker]",
+        kwargs: "Dict[str, VariableTracker]",
+    ) -> "VariableTracker":
+        # iter(gen) -> gen
+        if name == "__iter__":
+            return self
+        super().call_method(tx, name, args, kwargs)
 
 
 class UserMethodVariable(UserFunctionVariable):
