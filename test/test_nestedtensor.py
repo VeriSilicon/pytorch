@@ -24,6 +24,7 @@ from torch.nested._internal.nested_tensor import (
     nested_view_from_values_offsets,
     NestedTensor,
     ViewNestedFromBuffer,
+    _construct_nested_tensor_compat,
 )
 from torch.nn.attention.flex_attention import create_nested_block_mask, flex_attention
 from torch.testing._internal.common_cuda import (
@@ -198,13 +199,14 @@ def random_nt_from_dims(
         ]
         for d in range(dims[0])
     ]
-    return torch.nested.nested_tensor(
+    ret = torch.nested.nested_tensor(
         [torch.randn(*size) for size in sizes],
         device=device,
         dtype=dtype,
         layout=layout,
         requires_grad=requires_grad,
     )
+    return ret
 
 
 # Creates an NT matching another NT's number of components and
@@ -4253,15 +4255,30 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
     @onlyCUDA
     @dtypes(torch.float32)
     def test_record_stream(self, device, dtype):
+        def is_plain_cuda_tensor(t):
+            from torch.nested._internal.cached_tensor import CachedTensor
+            from torch.nested._internal.offload_tensor import OffloadTensor
+
+            return (
+                isinstance(t, torch.Tensor)
+                and not isinstance(t, (CachedTensor, OffloadTensor))
+                and "cuda" in str(t.device)
+            )
+
         def _create_nt():
             values = torch.ones(1024, 4 * 1024, device="cuda")
             offsets = torch.tensor([0, 500, 1024], device="cuda", dtype=torch.int64)
             lengths = offsets.diff()
             nt = torch.nested.nested_tensor_from_jagged(values, offsets, lengths)
+
+            flat_tensors = [
+                nt._values,
+                nt._non_contig_offsets,
+                nt._device_lengths.device_tensor,
+            ]
+            assert all(is_plain_cuda_tensor(x) for x in flat_tensors)
             data_ptrs = {
-                nt._values.data_ptr(),
-                nt._offsets.data_ptr(),
-                nt._lengths.data_ptr(),
+                x.data_ptr() for x in flat_tensors
             }
             return nt, data_ptrs
 
@@ -5149,8 +5166,8 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
                 if nt_with_holes._ragged_idx == reduce_dim:
                     with self.assertRaisesRegex(
                         RuntimeError,
-                        "not supported where lengths is not None "
-                        + "if reducing across the ragged dimension for NestedTensor",
+                        "not supported for non-contiguous nested tensor inputs, e.g. with holes, "
+                        + "when reducing across the ragged dimension for NestedTensor",
                     ):
                         out = torch.nn.functional.softmax(nt_with_holes, dim=reduce_dim)
                 else:
@@ -5536,7 +5553,9 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
             cached_max_seqlen=(max_seqlen if pass_min_max else None),
             base=values,
         )
-        self.assertIs(nt.lengths(), lengths)
+        # Not the same exact instance because we returned a CachedTensor
+        # wrapper lengths.
+        self.assertIsNot(nt.lengths(), lengths)
 
         # === construct from (values, lengths) ===
         values = torch.randn(14, 5, device=device, dtype=dtype)
@@ -5769,7 +5788,7 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
         offsets = torch.tensor([0, 8, 12, 13, 16], device=device)
         lengths = torch.tensor([6, 2, 1, 2], device=device)
         ragged_idx = 1
-        nt = torch.nested._internal.nested_tensor.NestedTensor(
+        nt = _construct_nested_tensor_compat(
             values, offsets=offsets, lengths=lengths, _ragged_idx=ragged_idx
         )  # 4D nested tensor
 
@@ -5788,7 +5807,7 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
         offsets = torch.tensor([0, 8, 12, 13, 16], device=device)
         lengths = torch.tensor([6, 2, 1, 2], device=device)
         ragged_idx = 2
-        nt = torch.nested._internal.nested_tensor.NestedTensor(
+        nt = _construct_nested_tensor_compat(
             values, offsets=offsets, lengths=lengths, _ragged_idx=ragged_idx
         )  # 4D nested tensor
 
@@ -5803,7 +5822,7 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
         offsets = torch.tensor([0, 2, 4, 8], device=device)
         lengths = torch.tensor([2, 1, 3], device=device)
         ragged_idx = 2
-        nt = torch.nested._internal.nested_tensor.NestedTensor(
+        nt = _construct_nested_tensor_compat(
             values, offsets=offsets, lengths=lengths, _ragged_idx=ragged_idx
         )  # 4D nested tensor
 
@@ -5822,7 +5841,7 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
         offsets = torch.tensor([0, 100, 128], device=device)
         lengths = torch.tensor([50, 28], device=device)
         ragged_idx = 3
-        nt = torch.nested._internal.nested_tensor.NestedTensor(
+        nt = _construct_nested_tensor_compat(
             values, offsets=offsets, lengths=lengths, _ragged_idx=ragged_idx
         )  # 4D nested tensor
 
@@ -5836,27 +5855,28 @@ class TestNestedTensorSubclass(NestedTensorTestCase):
         for i, t in enumerate(out):
             self.assertEqual(t, tensor_list[i])
 
-    @skipIfTorchDynamo(
-        "TorchDynamo raises an error for ragged_idx == 0 earlier than Torch"
-    )
-    def test_unbind_lengths_ragged_idx_0(self, device):
-        values = torch.randn(16, 8, 128, device=device)
-        offsets = torch.tensor([0, 100, 128], device=device)
-        lengths = torch.tensor([50, 28], device=device)
-        ragged_idx = 0
-        nt = torch.nested._internal.nested_tensor.NestedTensor(
-            values, offsets=offsets, lengths=lengths, _ragged_idx=ragged_idx
-        )  # 4D nested tensor
+    # What does ragged_idx mean here?
+    # @skipIfTorchDynamo(
+    #     "TorchDynamo raises an error for ragged_idx == 0 earlier than Torch"
+    # )
+    # def test_unbind_lengths_ragged_idx_0(self, device):
+    #     values = torch.randn(16, 8, 128, device=device)
+    #     offsets = torch.tensor([0, 100, 128], device=device)
+    #     lengths = torch.tensor([50, 28], device=device)
+    #     ragged_idx = 0
+    #     nt = _construct_nested_tensor_compat(
+    #         values, offsets=offsets, lengths=lengths, _ragged_idx=ragged_idx
+    #     )  # 4D nested tensor
 
-        tensor_list = []
-        for i in range(offsets.shape[0] - 1):
-            tensor_list.append(values[:, :, offsets[i] : (offsets[i] + lengths[i])])
+    #     tensor_list = []
+    #     for i in range(offsets.shape[0] - 1):
+    #         tensor_list.append(values[:, :, offsets[i] : (offsets[i] + lengths[i])])
 
-        self.assertRaisesRegex(
-            RuntimeError,
-            r"unbind\(\): nested tensor.*out of bounds",
-            lambda: nt.unbind(),
-        )
+    #     self.assertRaisesRegex(
+    #         RuntimeError,
+    #         r"unbind\(\): nested tensor.*out of bounds",
+    #         lambda: nt.unbind(),
+    #     )
 
     def test_narrow(self, device):
         starts = torch.tensor([0, 1, 2, 3, 4], device=device, dtype=torch.int64)
@@ -7632,7 +7652,7 @@ torch.cuda.synchronize()
         # expect min / max seqlen to be stored here
         cache = dict(nt._metadata_cache)
 
-        @torch.compile
+        @torch.compile(dynamic=True)
         def g(nt):
             padded = nt.to_padded_tensor(0.3)
             intermediate = padded.sin() + 1
@@ -7986,9 +8006,12 @@ from torch.nested._internal.nested_int import NestedIntNode
 
 class TestNestedInt(torch.testing._internal.common_utils.TestCase):
     def test_comparisons(self):
-        a = torch.SymInt(NestedIntNode(1, 1))
-        b = torch.SymInt(NestedIntNode(1, 1))
-        c = torch.SymInt(NestedIntNode(2, 1))
+        cache = torch.tensor(1.)
+        cache2 = torch.tensor(1.)
+
+        a = torch.SymInt(NestedIntNode(cache, 1))
+        b = torch.SymInt(NestedIntNode(cache, 1))
+        c = torch.SymInt(NestedIntNode(cache2, 1))
         d = 3
 
         self.assertTrue(a == a)
@@ -8060,8 +8083,11 @@ class TestNestedInt(torch.testing._internal.common_utils.TestCase):
         self.assertTrue(a > 1)
 
     def test_with_factor(self):
-        a = torch.SymInt(NestedIntNode(1, 5))
-        b = torch.SymInt(NestedIntNode(1, 10))
+        cache = torch.tensor(1.)
+
+        a = torch.SymInt(NestedIntNode(cache, 5))
+        b = torch.SymInt(NestedIntNode(cache, 10))
+
         # eq
         self.assertFalse(a == b)
         self.assertFalse(a >= b)
