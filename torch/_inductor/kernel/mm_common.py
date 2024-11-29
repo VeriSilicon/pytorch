@@ -404,7 +404,7 @@ def mm_options(config, sym_m, sym_n, sym_k, layout, b_prologue_cast_type=None):
     return dict(
         GROUP_M=8,
         EVEN_K=even_k_symbolic,
-        ALLOW_TF32=allow_tf32,
+        ALLOW_TF32=False,
         ACC_TYPE=acc_type(layout.dtype),
         B_PROLOGUE_CAST_TYPE=b_prologue_cast_type,
         num_stages=config.num_stages,

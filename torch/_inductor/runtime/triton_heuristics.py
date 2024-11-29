@@ -627,14 +627,21 @@ class CachingAutotuner(KernelInterface):
 
         launcher = scope["launcher"]
         launcher.config = cfg
-        launcher.n_regs = getattr(binary, "n_regs", None)
-        launcher.n_spills = getattr(binary, "n_spills", None)
-        launcher.shared = binary_shared
-        launcher.store_cubin = self.inductor_meta.get("store_cubin", False)
-        # store this global variable to avoid the high overhead of reading it when calling run
-        if launcher.store_cubin:
-            launcher.fn = self.fn
-            launcher.bin = binary
+
+        if self.device_props.type == "cpu":
+            launcher.n_regs = 0
+            launcher.n_spills = 0
+            launcher.shared = binary_shared
+            launcher.store_cubin = False
+        else:
+            launcher.n_regs = getattr(binary, "n_regs", None)
+            launcher.n_spills = getattr(binary, "n_spills", None)
+            launcher.shared = binary_shared
+            launcher.store_cubin = self.inductor_meta.get("store_cubin", False)
+            # store this global variable to avoid the high overhead of reading it when calling run
+            if launcher.store_cubin:
+                launcher.fn = self.fn
+                launcher.bin = binary
 
         return binary, launcher
 
@@ -671,6 +678,9 @@ class CachingAutotuner(KernelInterface):
             from torch._inductor.utils import do_bench_using_profiling
 
             return do_bench_using_profiling(kernel_call, warmup=10, rep=40)
+        
+        if self.device_props.type == "cpu":
+            return benchmarker.benchmark_cpu(kernel_call)
 
         return benchmarker.benchmark_gpu(kernel_call, rep=40, fast_flush=True)
 
