@@ -1,4 +1,5 @@
 # mypy: allow-untyped-defs
+from dataclasses import dataclass
 import inspect
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Type, Union
 
@@ -289,6 +290,44 @@ class XpuInterface(DeviceInterface):
         return torch.xpu.is_bf16_supported()
 
 
+@dataclass
+class CpuDeviceProperties:
+    multi_processor_count: int
+
+
+class CpuInterface(DeviceInterface):
+    class Event(_EventBase):
+        pass
+
+    @staticmethod
+    def is_available() -> bool:
+        return True
+
+    @staticmethod
+    def get_compute_capability(device: _device_t = None) -> str:
+        return ""
+
+    @staticmethod
+    def get_raw_stream(device_idx) -> int:
+        return 0
+
+    @staticmethod
+    def current_device():
+        return 0
+
+    @staticmethod
+    def synchronize(device: _device_t = None):
+        pass
+
+    class Worker:
+        @staticmethod
+        def get_device_properties(device: _device_t = None):
+            import multiprocessing
+
+            cpu_count = multiprocessing.cpu_count()
+            return CpuDeviceProperties(cpu_count)
+
+
 device_interfaces: Dict[str, Type[DeviceInterface]] = {}
 _device_initialized = False
 
@@ -319,6 +358,8 @@ def get_registered_device_interfaces() -> Iterable[Tuple[str, Type[DeviceInterfa
 
 def init_device_reg():
     global _device_initialized
+    register_interface_for_device("cpu", CpuInterface)
+
     register_interface_for_device("cuda", CudaInterface)
     for i in range(torch.cuda.device_count()):
         register_interface_for_device(f"cuda:{i}", CudaInterface)

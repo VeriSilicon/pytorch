@@ -712,7 +712,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def abs(x):
-        return f"tl_math.abs({x})"
+        return f"tl.abs({x})"
 
     @staticmethod
     def libdevice_abs(x):
@@ -720,7 +720,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def exp(x):
-        return f"tl_math.exp({x})"
+        return f"tl.exp({x})"
 
     @staticmethod
     def libdevice_exp(x):
@@ -728,7 +728,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def exp2(x):
-        return f"libdevice.exp2({x})"
+        return f"tl.exp2({x})"
 
     @staticmethod
     def expm1(x):
@@ -736,7 +736,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def sqrt(x):
-        return f"libdevice.sqrt({x})"
+        return f"tl.sqrt({x})"
 
     @staticmethod
     def libdevice_sqrt(x):
@@ -762,11 +762,11 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def minimum(a, b):
-        return f"triton_helpers.minimum({a}, {b})"
+        return f"tl.minimum({a}, {b})"
 
     @staticmethod
     def maximum(a, b):
-        return f"triton_helpers.maximum({a}, {b})"
+        return f"tl.maximum({a}, {b})"
 
     @staticmethod
     def where(a, b, c):
@@ -784,7 +784,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def cos(x):
-        return f"tl_math.cos({x})"
+        return f"tl.cos({x})"
 
     @staticmethod
     def libdevice_cos(x):
@@ -792,7 +792,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def sin(x):
-        return f"tl_math.sin({x})"
+        return f"tl.sin({x})"
 
     @staticmethod
     def libdevice_sin(x):
@@ -812,7 +812,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def erf(x):
-        return f"libdevice.erf({x})"
+        return f"tl.erf({x})"
 
     @staticmethod
     def cosh(x):
@@ -872,7 +872,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def log2(x):
-        return f"libdevice.log2({x})"
+        return f"tl.log2({x})"
 
     @staticmethod
     def nextafter(x, y):
@@ -939,7 +939,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def rsqrt(x):
-        return f"libdevice.rsqrt({x})"
+        return f"tl.rsqrt({x})"
 
     @staticmethod
     def log1p(x):
@@ -972,7 +972,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def log(x):
-        return f"tl_math.log({x})"
+        return f"tl.log({x})"
 
     @staticmethod
     def libdevice_log(x):
@@ -992,7 +992,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def floor(x):
-        return f"libdevice.floor({x})"
+        return f"tl.floor({x})"
 
     @staticmethod
     def floordiv(a, b):
@@ -1023,7 +1023,7 @@ class TritonOverrides(OpOverrides):
 
     @staticmethod
     def ceil(x):
-        return f"libdevice.ceil({x})"
+        return f"tl.ceil({x})"
 
 
 TritonOverrides._initialize_pointwise_overrides("triton")
@@ -1939,14 +1939,14 @@ class TritonKernel(SIMDKernel):
             module = "triton_helpers" if use_helper else "tl"
             if reduction_type in {"max", "min"}:
                 return self.reduction_resize(
-                    f"{module}.{reduction_type}2({value}, {dim})"
+                    f"tl.{reduction_type}({value}, {dim})"
                 )
-            return self.reduction_resize(f"{module}.{reduction_type}({value}, {dim})")
+            return self.reduction_resize(f"{module}.{reduction_type}({value}, axis={dim})")
 
         def final_argreduce(buffer, result_var, value, index):
             buffer.splice(
                 f"""\
-                _, {result_var}_tmp = triton_helpers.{root_op}_with_index({value}, {index}, {dim})
+                {result_var}_tmp = tl.{reduction_type}({value}, axis={dim})
                 {result_var} = {self.reduction_resize(f'{result_var}_tmp')}
                 """
             )
@@ -2828,7 +2828,7 @@ class TritonKernel(SIMDKernel):
             call_args,
             grid,
             current_device.index,
-            cuda=True,
+            cuda=(current_device.type != "cpu"),
             triton=True,
             arg_types=arg_types,
             grid_fn=self._get_grid_fn(),
