@@ -291,13 +291,27 @@ class XpuInterface(DeviceInterface):
 
 
 @dataclass
-class CpuDeviceProperties:
+class VSIDeviceProperties:
     multi_processor_count: int
 
 
-class CpuInterface(DeviceInterface):
+class VSIInterface(DeviceInterface):
+    device = torch.vsi.device
+
     class Event(_EventBase):
         pass
+
+    device_count = staticmethod(torch.vsi.device_count)
+    set_device = staticmethod(torch.vsi.set_device)
+    current_device = staticmethod(torch.vsi.current_device)
+
+    @staticmethod
+    def maybe_exchange_device(device: int) -> int:
+        return 0
+
+    @staticmethod
+    def exchange_device(device: int) -> int:
+        return 0
 
     @staticmethod
     def is_available() -> bool:
@@ -322,10 +336,7 @@ class CpuInterface(DeviceInterface):
     class Worker:
         @staticmethod
         def get_device_properties(device: _device_t = None):
-            import multiprocessing
-
-            cpu_count = multiprocessing.cpu_count()
-            return CpuDeviceProperties(cpu_count)
+            return VSIDeviceProperties(1)
 
 
 device_interfaces: Dict[str, Type[DeviceInterface]] = {}
@@ -336,13 +347,13 @@ def register_interface_for_device(
     device: Union[str, torch.device], device_interface: Type[DeviceInterface]
 ):
     if isinstance(device, torch.device):
-        device = str(device)
+        device = device.type
     device_interfaces[device] = device_interface
 
 
 def get_interface_for_device(device: Union[str, torch.device]) -> Type[DeviceInterface]:
     if isinstance(device, torch.device):
-        device = str(device)
+        device = device.type
     if not _device_initialized:
         init_device_reg()
     if device in device_interfaces:
@@ -358,7 +369,7 @@ def get_registered_device_interfaces() -> Iterable[Tuple[str, Type[DeviceInterfa
 
 def init_device_reg():
     global _device_initialized
-    register_interface_for_device("cpu", CpuInterface)
+    register_interface_for_device("vsi", VSIInterface)
 
     register_interface_for_device("cuda", CudaInterface)
     for i in range(torch.cuda.device_count()):

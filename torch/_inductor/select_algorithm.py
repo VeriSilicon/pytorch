@@ -578,7 +578,7 @@ class TritonTemplateKernel(TritonKernel):
                 grid_fn=f"{self.grid_fn.__module__}.{self.grid_fn.__name__}",
                 arg_types=arg_types,
                 triton_meta=self.triton_meta,
-                cuda=("cpu" not in V.graph.device_types),
+                cuda=("vsi" not in V.graph.device_types),
             )
 
 
@@ -749,7 +749,8 @@ class TritonTemplate(KernelTemplate):
             kwargs,
         )
         bmreq_cls: Type[TritonBenchmarkRequest]
-        if layout.device.type == "cpu":
+        if layout.device.type == "vsi":
+            # TODO(): Use TritonGPUBenchmarkRequest.
             bmreq_cls = TritonCPUBenchmarkRequest
         else:
             bmreq_cls = TritonGPUBenchmarkRequest

@@ -25,15 +25,15 @@ def has_triton() -> bool:
     def cuda_extra_check(device_interface):
         return device_interface.Worker.get_device_properties().major >= 7
     
-    def cpu_extra_check(device_interface):
+    def vsi_extra_check(device_interface):
         import triton.backends
-        return "triton_shared" in triton.backends.backends
+        return "vsi" in triton.backends.backends
 
     def _return_true(device_interface):
         return True
 
     triton_supported_devices = {
-        "cpu": cpu_extra_check,
+        "vsi": vsi_extra_check,
         "cuda": cuda_extra_check,
         "xpu": _return_true
     }

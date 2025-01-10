@@ -656,7 +656,7 @@ class TritonBenchmarkRequest(BenchmarkRequest):
         if "warmup" in inspect.signature(run_method).parameters:
             warmup_arg["warmup"] = False
 
-        if output_tensor.device.type == "cpu":
+        if output_tensor.device.type == "vsi":
             stream = 0
         else:
             from torch._C import _cuda_getCurrentRawStream as get_raw_stream
