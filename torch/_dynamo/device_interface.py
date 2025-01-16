@@ -1,4 +1,5 @@
 # mypy: allow-untyped-defs
+from dataclasses import dataclass
 import inspect
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Type, Union
 
@@ -289,6 +290,55 @@ class XpuInterface(DeviceInterface):
         return torch.xpu.is_bf16_supported()
 
 
+@dataclass
+class VSIDeviceProperties:
+    multi_processor_count: int
+
+
+class VSIInterface(DeviceInterface):
+    device = torch.vsi.device
+
+    class Event(_EventBase):
+        pass
+
+    device_count = staticmethod(torch.vsi.device_count)
+    set_device = staticmethod(torch.vsi.set_device)
+    current_device = staticmethod(torch.vsi.current_device)
+
+    @staticmethod
+    def maybe_exchange_device(device: int) -> int:
+        return 0
+
+    @staticmethod
+    def exchange_device(device: int) -> int:
+        return 0
+
+    @staticmethod
+    def is_available() -> bool:
+        return True
+
+    @staticmethod
+    def get_compute_capability(device: _device_t = None) -> str:
+        return ""
+
+    @staticmethod
+    def get_raw_stream(device_idx) -> int:
+        return 0
+
+    @staticmethod
+    def current_device():
+        return 0
+
+    @staticmethod
+    def synchronize(device: _device_t = None):
+        pass
+
+    class Worker:
+        @staticmethod
+        def get_device_properties(device: _device_t = None):
+            return VSIDeviceProperties(1)
+
+
 device_interfaces: Dict[str, Type[DeviceInterface]] = {}
 _device_initialized = False
 
@@ -297,13 +347,13 @@ def register_interface_for_device(
     device: Union[str, torch.device], device_interface: Type[DeviceInterface]
 ):
     if isinstance(device, torch.device):
-        device = str(device)
+        device = device.type
     device_interfaces[device] = device_interface
 
 
 def get_interface_for_device(device: Union[str, torch.device]) -> Type[DeviceInterface]:
     if isinstance(device, torch.device):
-        device = str(device)
+        device = device.type
     if not _device_initialized:
         init_device_reg()
     if device in device_interfaces:
@@ -319,6 +369,8 @@ def get_registered_device_interfaces() -> Iterable[Tuple[str, Type[DeviceInterfa
 
 def init_device_reg():
     global _device_initialized
+    register_interface_for_device("vsi", VSIInterface)
+
     register_interface_for_device("cuda", CudaInterface)
     for i in range(torch.cuda.device_count()):
         register_interface_for_device(f"cuda:{i}", CudaInterface)

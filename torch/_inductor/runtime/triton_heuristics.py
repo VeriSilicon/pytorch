@@ -370,6 +370,11 @@ class CachingAutotuner(KernelInterface):
         compile_meta["device_type"] = self.device_props.type
         compile_meta["cc"] = self.device_props.cc
 
+        if self.device_props.type == "vsi":
+            from triton.backends.vsi.driver import VSIDriver
+            from triton.runtime import driver as triton_driver
+            triton_driver.set_active(VSIDriver())
+
         if ASTSource:
             compile_args = (
                 ASTSource(
@@ -627,14 +632,21 @@ class CachingAutotuner(KernelInterface):
 
         launcher = scope["launcher"]
         launcher.config = cfg
-        launcher.n_regs = getattr(binary, "n_regs", None)
-        launcher.n_spills = getattr(binary, "n_spills", None)
-        launcher.shared = binary_shared
-        launcher.store_cubin = self.inductor_meta.get("store_cubin", False)
-        # store this global variable to avoid the high overhead of reading it when calling run
-        if launcher.store_cubin:
-            launcher.fn = self.fn
-            launcher.bin = binary
+
+        if self.device_props.type == "vsi":
+            launcher.n_regs = 0
+            launcher.n_spills = 0
+            launcher.shared = binary_shared
+            launcher.store_cubin = False
+        else:
+            launcher.n_regs = getattr(binary, "n_regs", None)
+            launcher.n_spills = getattr(binary, "n_spills", None)
+            launcher.shared = binary_shared
+            launcher.store_cubin = self.inductor_meta.get("store_cubin", False)
+            # store this global variable to avoid the high overhead of reading it when calling run
+            if launcher.store_cubin:
+                launcher.fn = self.fn
+                launcher.bin = binary
 
         return binary, launcher
 
@@ -671,6 +683,10 @@ class CachingAutotuner(KernelInterface):
             from torch._inductor.utils import do_bench_using_profiling
 
             return do_bench_using_profiling(kernel_call, warmup=10, rep=40)
+        
+        if self.device_props.type == "vsi":
+            # TODO(): Use triton.testing.do_bench().
+            return benchmarker.benchmark_cpu(kernel_call)
 
         return benchmarker.benchmark_gpu(kernel_call, rep=40, fast_flush=True)
 

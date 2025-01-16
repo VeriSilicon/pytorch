@@ -203,7 +203,11 @@ def init_backend_registration():
     from .wrapper import WrapperCodeGen
 
     if get_scheduling_for_device("cpu") is None:
-        cpu_backends = {"cpp": CppScheduling, "halide": HalideScheduling}
+        cpu_backends = {
+            "cpp": CppScheduling,
+            "halide": HalideScheduling,
+            "triton": TritonScheduling,
+        }
         register_backend_for_device(
             "cpu",
             lambda *args, **kwargs: cpu_backends[config.cpu_backend](*args, **kwargs),
@@ -223,6 +227,9 @@ def init_backend_registration():
 
     if get_scheduling_for_device("xpu") is None:
         register_backend_for_device("xpu", TritonScheduling, WrapperCodeGen)
+
+    if get_scheduling_for_device("vsi") is None:
+        register_backend_for_device("vsi", TritonScheduling, WrapperCodeGen)
 
     private_backend = torch._C._get_privateuse1_backend_name()
     if (
@@ -263,6 +270,7 @@ def get_device_op_overrides(device: str):
     if not device_op_overrides_dict.keys():
         from .cuda import device_op_overrides  # noqa: F401
         from .xpu import device_op_overrides as xpu_op_overrides  # noqa: F401
+        from .vsi import device_op_overrides as vsi_op_overrides  # noqa: F401
 
     if device in device_op_overrides_dict.keys():
         return device_op_overrides_dict[device]

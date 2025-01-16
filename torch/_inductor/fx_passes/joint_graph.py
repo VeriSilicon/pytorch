@@ -47,7 +47,8 @@ def lazy_init():
     from .pad_mm import _pad_mm_init
 
     _pad_mm_init()
-    _sfdp_init()
+    # TODO(): Implement fused attention triton kernel.
+    # _sfdp_init()
     _misc_patterns_init()
 
 
